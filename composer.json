@@ -1,0 +1,34 @@
+{
+    "name": "elyonpay/php-sdk",
+    "description": "Official PHP SDK for the ElyonPay payment API (Mobile Money, Visa, Mastercard) — zero runtime dependencies.",
+    "type": "library",
+    "keywords": ["elyonpay", "payment", "mobile money", "mtn", "orange money", "africa", "cameroon", "sdk"],
+    "homepage": "https://elyonpay.com",
+    "license": "MIT",
+    "authors": [
+        { "name": "ElyonPay", "homepage": "https://elyonpay.com" }
+    ],
+    "support": {
+        "docs": "https://docs.elyonpay.com",
+        "email": "support@elyonpay.com",
+        "issues": "https://github.com/elyonpay/elyonpay-php-sdk/issues"
+    },
+    "require": {
+        "php": ">=7.4",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6"
+    },
+    "autoload": {
+        "psr-4": { "ElyonPay\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "ElyonPay\\Tests\\": "tests/" }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}
