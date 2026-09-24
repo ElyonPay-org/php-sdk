@@ -17,6 +17,23 @@ namespace ElyonPay;
  * vocabulary as a defensive belt-and-suspenders: these mappings are
  * unambiguous and protect against any future API/doc drift. Unknown states are
  * always treated as PENDING — the SDK never auto-fulfils on uncertainty.
+ *
+ * One state does not mean what its name suggests: PENDING. On the ElyonPay side it
+ * asserts that the money has been COLLECTED — the validation date is stamped and the
+ * merchant is compensated at that moment — and what it still awaits is the delivery,
+ * not the payment. The word comes from a different vocabulary: with most providers,
+ * and inside ElyonPay's own payment service, "pending" means "in flight, nothing
+ * decided". Here it means the opposite.
+ *
+ * It is therefore classified as PAID. Treating it as PENDING was not a harmless
+ * mislabel: an order paid by a customer stayed on-hold and was never fulfilled. It
+ * went unnoticed because a sale with no delivery moves on to DELIVERED within the
+ * same transition, so PENDING is only ever observed on sales that DO await a
+ * delivery — exactly the ones a merchant must ship.
+ *
+ * WAITING_FOR_DELIVERY is the same state under the name it is being renamed to.
+ * Both are accepted so this SDK keeps working across that change, in either
+ * direction, without a lockstep release.
  */
 final class TransactionStatus
 {
@@ -28,6 +45,9 @@ final class TransactionStatus
     private const PAID_STATES = [
         'ACCEPTED',
         'DELIVERED',
+        // Encaissé, en attente de livraison — voir l'explication en tête de classe.
+        'PENDING',
+        'WAITING_FOR_DELIVERY', // le même état, sous son nom à venir
         'SUCCESSFUL', // alternate vocabulary seen in the docs example
     ];
 
@@ -40,10 +60,14 @@ final class TransactionStatus
         'EXPIRED',  // alternate vocabulary
     ];
 
-    /** States that mean "still in progress, check again later". */
+    /**
+     * States that mean "still in progress, check again later".
+     *
+     * Only kept for documentation: normalize() falls through to PENDING for anything it does
+     * not recognise, so this list is never consulted. PENDING itself has moved to PAID_STATES.
+     */
     private const PENDING_STATES = [
         'CREATED',
-        'PENDING',
         'WAITING_FOR_PAYMENT',
     ];
 
