@@ -84,6 +84,9 @@ final class WebhookTest extends TestCase
         self::assertTrue(TransactionStatus::isPaid('PENDING'));
         self::assertTrue(TransactionStatus::isPaid('WAITING_FOR_DELIVERY'));
         self::assertTrue(TransactionStatus::isPaid('DELIVERED'));
+        // Delivery in progress after PENDING: still paid, never back to "awaiting payment".
+        self::assertTrue(TransactionStatus::isPaid('PREPARATION'));
+        self::assertTrue(TransactionStatus::isPaid('DELIVERING'));
         self::assertTrue(TransactionStatus::isFailed('DECLINED'));
         self::assertTrue(TransactionStatus::isFailed('CANCELLED'));
         self::assertTrue(TransactionStatus::isPending('CREATED'));

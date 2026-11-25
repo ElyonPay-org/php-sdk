@@ -107,7 +107,7 @@ automatically on a `401`.
 the **single source of truth** for every plugin built on this SDK:
 
 ```php
-TransactionStatus::isPaid($state);    // ACCEPTED, DELIVERED, PENDING, WAITING_FOR_DELIVERY
+TransactionStatus::isPaid($state);    // PENDING, WAITING_FOR_DELIVERY, ACCEPTED, PREPARATION, DELIVERING, DELIVERED
 TransactionStatus::isFailed($state);  // REJECTED, DECLINED, CANCELLED
 TransactionStatus::isPending($state); // CREATED, WAITING_FOR_PAYMENT, unknown
 ```

@@ -11,6 +11,7 @@
 - API errors shaped `{"message": ...}` (string or list) now surface their message.
 - `timeout` option for the default cURL client.
 - `listTransactions()` is deprecated: the API serves no list to integrations.
+- `PREPARATION` and `DELIVERING` (delivery in progress, after `PENDING`) are **paid** states.
 
 ## 1.0.1
 
