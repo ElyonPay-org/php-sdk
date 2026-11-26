@@ -11,7 +11,8 @@ namespace ElyonPay;
  *
  * Canonical list (docs.elyonpay.com, "États des Transactions"):
  *   CREATED, PENDING, WAITING_FOR_PAYMENT, ACCEPTED, REJECTED, DELIVERED,
- *   CANCELLED, DECLINED.
+ *   CANCELLED, DECLINED, plus PREPARATION and DELIVERING between PENDING and
+ *   DELIVERED when the merchant ships the order.
  *
  * For money-handling robustness we also recognise the SUCCESSFUL/FAILED/EXPIRED
  * vocabulary as a defensive belt-and-suspenders: these mappings are
@@ -44,6 +45,9 @@ final class TransactionStatus
     /** States that mean the money is secured / the order can be fulfilled. */
     private const PAID_STATES = [
         'ACCEPTED',
+        // Paid, the order is being prepared or delivered (after PENDING, before DELIVERED).
+        'PREPARATION',
+        'DELIVERING',
         'DELIVERED',
         // Encaissé, en attente de livraison — voir l'explication en tête de classe.
         'PENDING',

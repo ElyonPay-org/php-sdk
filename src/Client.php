@@ -12,34 +12,36 @@ use ElyonPay\Http\HttpClientInterface;
 /**
  * Main entry point for the ElyonPay API.
  *
- * Usage:
+ * Usage (recommended: the merchant API key, from the dashboard):
  *   $client = new \ElyonPay\Client([
- *       'username'    => 'merchant@example.com',
- *       'password'    => '***',
- *       'role'        => 'ROLE_MERCHANT_ADMIN',
+ *       'api_key'     => 'pk_live_egt_...',
  *       'environment' => \ElyonPay\Environment::SANDBOX,
  *   ]);
  *
  *   $link = $client->createPaymentLink([
- *       'amount'    => 15000,
- *       'user_lang' => 'fr',
- *       'msisdn'    => '+237600000001',
- *       'success'   => 'https://yoursite.com/payment/done',
- *       'error'     => 'https://yoursite.com/payment/error',
+ *       'amount'      => 15000,
+ *       'user_lang'   => 'fr',
+ *       'msisdn'      => '+237600000001',
+ *       'success'     => 'https://yoursite.com/payment/done',
+ *       'error'       => 'https://yoursite.com/payment/error',
+ *       'webhook'     => 'https://yoursite.com/webhooks/elyonpay',
+ *       'external_id' => 'CMD-2026-0042',
  *   ]);
  *   // -> redirect the customer to $link['url']
  *
  *   $tx = $client->getTransaction($uuid);
  *   if (\ElyonPay\TransactionStatus::isPaid($tx['state'] ?? null)) { ... }
  *
- * SECURITY NOTE: ElyonPay currently authenticates with the merchant account
- * email + password rather than a revocable API key. Store these credentials
- * encrypted, never log them, and never expose them client-side.
+ * Authentication: an API key (Authorization: Bearer pk_live_egt_...) reaches the payment and
+ * transaction endpoints only, and can be regenerated from the dashboard if it leaks. The merchant
+ * email + password (JWT obtained from /login) is still accepted for backward compatibility, but it
+ * opens the whole account: prefer the key. Either way, keep the secret server-side and never log it.
  */
 final class Client
 {
-    private string $username;
-    private string $password;
+    private ?string $apiKey = null;
+    private string $username = '';
+    private string $password = '';
     private string $role;
     private string $environment;
     private string $baseUrl;
@@ -49,40 +51,57 @@ final class Client
 
     /**
      * @param array{
-     *     username:string,
-     *     password:string,
+     *     api_key?:string,
+     *     username?:string,
+     *     password?:string,
      *     role?:string,
      *     environment?:string,
-     *     token?:string
-     * } $config
+     *     token?:string,
+     *     timeout?:int
+     * } $config Either "api_key", or "username" + "password" (legacy JWT login).
      */
     public function __construct(array $config, ?HttpClientInterface $http = null)
     {
-        if (empty($config['username']) || empty($config['password'])) {
-            throw new \InvalidArgumentException('Both "username" and "password" are required.');
+        $apiKey = isset($config['api_key']) ? trim((string) $config['api_key']) : '';
+
+        if ($apiKey !== '') {
+            $this->apiKey = $apiKey;
+        } elseif (empty($config['username']) || empty($config['password'])) {
+            throw new \InvalidArgumentException('Provide an "api_key", or both "username" and "password".');
+        } else {
+            $this->username = (string) $config['username'];
+            $this->password = (string) $config['password'];
         }
 
-        $this->username    = (string) $config['username'];
-        $this->password    = (string) $config['password'];
         $this->role        = (string) ($config['role'] ?? 'ROLE_MERCHANT_ADMIN');
         $this->environment = (string) ($config['environment'] ?? Environment::SANDBOX);
         $this->baseUrl     = Environment::baseUrl($this->environment);
-        $this->http        = $http ?? new CurlHttpClient();
+        $this->http        = $http ?? new CurlHttpClient((int) ($config['timeout'] ?? 30));
 
-        // Allow a pre-obtained token to be injected (e.g. cached by the host plugin).
-        if (!empty($config['token'])) {
+        // Allow a pre-obtained JWT to be injected (e.g. cached by the host plugin). Ignored with an
+        // API key, which needs no token.
+        if ($this->apiKey === null && !empty($config['token'])) {
             $this->token = (string) $config['token'];
         }
     }
 
+    /** True when the client authenticates with an API key rather than a JWT. */
+    public function usesApiKey(): bool
+    {
+        return $this->apiKey !== null;
+    }
+
     /**
-     * Authenticate and return a JWT. The token is cached on the instance and
-     * reused for subsequent calls. Tokens expire server-side, so callers that
-     * keep a long-lived Client should be ready for a 401 (handled transparently
-     * by the request layer below).
+     * Authenticate with the merchant email + password and return a JWT (legacy mode).
+     *
+     * @throws \LogicException when the client is configured with an API key, which needs no login
      */
     public function login(): string
     {
+        if ($this->apiKey !== null) {
+            throw new \LogicException('An API key needs no login: it is sent as is on every request.');
+        }
+
         $response = $this->http->request(
             'POST',
             $this->baseUrl . '/login',
@@ -105,9 +124,17 @@ final class Client
         return $this->token;
     }
 
-    /** Return the current token, logging in if necessary. */
+    /**
+     * Return the JWT, logging in if necessary (legacy mode).
+     *
+     * @throws \LogicException when the client is configured with an API key: there is no token to
+     *                         cache, and returning the key here would invite storing it elsewhere
+     */
     public function getToken(): string
     {
+        if ($this->apiKey !== null) {
+            throw new \LogicException('No JWT with an API key.');
+        }
         if ($this->token === null) {
             $this->login();
         }
@@ -118,19 +145,28 @@ final class Client
     /**
      * Create a payment link (POST /request-to-pay/payment/link).
      *
-     * @param array{amount:int|float, user_lang:string, msisdn:string, success:string, error:string} $payload
+     * Required: amount, user_lang, success, error, and the payer's number as msisdn or
+     * customer.phone. Every other documented field is passed through as is: webhook,
+     * external_id (unique per merchant), customer { account_ref, name, email, phone, locale },
+     * onbehalfof, fees.
+     *
+     * @param array<string,mixed> $payload
      *
      * @return array{url:string}
      */
     public function createPaymentLink(array $payload): array
     {
-        foreach (['amount', 'user_lang', 'msisdn', 'success', 'error'] as $required) {
+        foreach (['amount', 'user_lang', 'success', 'error'] as $required) {
             if (!isset($payload[$required]) || $payload[$required] === '') {
                 throw new \InvalidArgumentException(sprintf('Missing required field "%s".', $required));
             }
         }
+        $phone = $payload['msisdn'] ?? ($payload['customer']['phone'] ?? null);
+        if ($phone === null || $phone === '') {
+            throw new \InvalidArgumentException('Missing required field "msisdn" (or "customer.phone").');
+        }
 
-        $data = $this->authedRequest('POST', '/request-to-pay/payment/link', $payload, $payload['user_lang']);
+        $data = $this->authedRequest('POST', '/request-to-pay/payment/link', $payload, (string) $payload['user_lang']);
 
         if (empty($data['url'])) {
             throw new ApiException('ElyonPay did not return a payment URL.');
@@ -140,11 +176,13 @@ final class Client
     }
 
     /**
-     * Fetch a transaction by its identifier / UUID (GET /transactions/{id}).
-     * Use this server-side to obtain the DEFINITIVE status — never trust the
-     * success/error redirect alone.
+     * Fetch a transaction by its uuid (GET /transactions/{uuid}).
+     * Use this server-side to obtain the DEFINITIVE status — never trust the success/error
+     * redirect, nor the content of a webhook, alone.
      *
-     * @return array<string,mixed> The raw transaction object (incl. "state")
+     * A transaction that does not exist or belongs to another merchant answers HTTP 400.
+     *
+     * @return array<string,mixed> The raw transaction object (incl. "state", "uuid", "amount", "externalId")
      */
     public function getTransaction(string $id): array
     {
@@ -154,6 +192,9 @@ final class Client
     /**
      * List transactions (GET /transactions).
      *
+     * @deprecated The API serves no GET /transactions list to integrations today (the merchant
+     *             history lives in the dashboard). Kept so existing callers do not break.
+     *
      * @return array<string,mixed>
      */
     public function listTransactions(): array
@@ -162,8 +203,8 @@ final class Client
     }
 
     /**
-     * Perform an authenticated request, retrying once after a fresh login if
-     * the token has expired (HTTP 401).
+     * Perform an authenticated request. With a JWT, retry once after a fresh login if the token
+     * has expired (HTTP 401). With an API key, a 401 means the key is wrong or revoked: no retry.
      *
      * @param array<string,mixed>|null $body
      *
@@ -171,9 +212,9 @@ final class Client
      */
     private function authedRequest(string $method, string $path, ?array $body = null, ?string $lang = null): array
     {
-        $attempt = static function (string $token) use ($method, $path, $body, $lang): array {
+        $build = static function (string $bearer) use ($body, $lang): array {
             $headers = [
-                'Authorization' => 'Bearer ' . $token,
+                'Authorization' => 'Bearer ' . $bearer,
                 'Accept'        => 'application/json',
             ];
             if ($lang !== null) {
@@ -188,13 +229,13 @@ final class Client
             return [$headers, $encoded];
         };
 
-        [$headers, $encoded] = $attempt($this->getToken());
+        [$headers, $encoded] = $build($this->apiKey ?? $this->getToken());
         $response = $this->http->request($method, $this->baseUrl . $path, $headers, $encoded);
 
-        // Token expired -> log in again once and retry.
-        if ($response['status'] === 401) {
+        // Token expired -> log in again once and retry (JWT only).
+        if ($response['status'] === 401 && $this->apiKey === null) {
             $this->token = null;
-            [$headers, $encoded] = $attempt($this->getToken());
+            [$headers, $encoded] = $build($this->getToken());
             $response = $this->http->request($method, $this->baseUrl . $path, $headers, $encoded);
         }
 
@@ -223,7 +264,12 @@ final class Client
         return \is_array($decoded) ? $decoded : [];
     }
 
-    /** @param array<string,mixed> $data */
+    /**
+     * The API answers errors in two shapes: {"error": {"code", "message"}}, and the more common
+     * {"message": "..."} where message may also be a list (or map) of strings.
+     *
+     * @param array<string,mixed> $data
+     */
     private function throwApiError(array $data, int $status): void
     {
         $code    = null;
@@ -232,6 +278,14 @@ final class Client
         if (isset($data['error']) && \is_array($data['error'])) {
             $code    = isset($data['error']['code']) ? (string) $data['error']['code'] : null;
             $message = isset($data['error']['message']) ? (string) $data['error']['message'] : $message;
+        } elseif (isset($data['message'])) {
+            $text = $this->flatten($data['message']);
+            if ($text !== '') {
+                $message = $text;
+            }
+            if (isset($data['code']) && \is_string($data['code'])) {
+                $code = $data['code'];
+            }
         }
 
         if ($status === 401) {
@@ -239,5 +293,24 @@ final class Client
         }
 
         throw new ApiException($message, $code, $status);
+    }
+
+    /** @param mixed $value */
+    private function flatten($value): string
+    {
+        if (\is_scalar($value)) {
+            return trim((string) $value);
+        }
+        if (!\is_array($value)) {
+            return '';
+        }
+        $parts = [];
+        array_walk_recursive($value, static function ($leaf) use (&$parts): void {
+            if (\is_scalar($leaf) && trim((string) $leaf) !== '') {
+                $parts[] = trim((string) $leaf);
+            }
+        });
+
+        return implode(' ', $parts);
     }
 }
