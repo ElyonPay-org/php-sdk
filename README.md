@@ -94,12 +94,13 @@ http_response_code(200);
 | `getTransaction(string $uuid): array` | Fetch one transaction (definitive status). |
 | `listTransactions(): array` | Deprecated: the API serves no `GET /transactions` list to integrations today. |
 | `usesApiKey(): bool` | Whether the client authenticates with an API key. |
-| `login(): string` / `getToken(): string` | Legacy JWT mode only. |
+| `login(): string` / `getToken(): string` | Deprecated e-mail + password mode only (fails once MFA is enabled). |
 | `Webhook::parse(string $body, array $headers): array` | Read a webhook notification. |
 
 With an API key there is no login: a `401` means the key is wrong or was
-regenerated. In legacy mode the JWT is cached on the instance and renewed
-automatically on a `401`.
+regenerated. In the deprecated e-mail + password mode, the JWT is cached on the
+instance and renewed automatically on a `401`, which no longer works once the
+account has MFA enabled.
 
 ## Status handling
 
@@ -135,11 +136,18 @@ transaction endpoints; anything else answers `403`.
 new Client(['api_key' => 'pk_live_egt_...', 'environment' => Environment::PRODUCTION]);
 ```
 
-The former email + password login (`username`, `password`, `role`) still works,
-but it opens the whole merchant account: migrate to the key. Either way:
+> **Integrating with an e-mail and password?** The `username` / `password` /
+> `role` options are deprecated. That sign-in is meant for the dashboard and the
+> mobile app: once two-step verification (MFA) is enabled on the account, it
+> asks for a one-time code, and `POST /login` answers `401` with
+> `mfa_required` instead of a token, so the integration stops working. Copy
+> the API key from the dashboard and pass it as `api_key`: nothing else changes.
 
-- never commit, log or expose the secret client-side;
-- make every call **server-side**.
+Keep the key secret:
+
+- never commit, log or expose it client-side;
+- make every call **server-side**;
+- if it leaks, regenerate it from the dashboard: the old key stops working at once.
 
 ## Error handling
 
@@ -150,7 +158,8 @@ use ElyonPay\Exception\ApiException;
 try {
     $client->createPaymentLink([...]);
 } catch (AuthenticationException $e) {
-    // wrong or regenerated API key (or bad legacy credentials)
+    // wrong or regenerated API key (in the deprecated e-mail + password mode:
+    // bad credentials, or MFA enabled on the account -> switch to the API key)
 } catch (ApiException $e) {
     $e->getMessage();    // the API's message
     $e->getHttpStatus(); // e.g. 409 when external_id was already used

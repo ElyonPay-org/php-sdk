@@ -34,8 +34,9 @@ use ElyonPay\Http\HttpClientInterface;
  *
  * Authentication: an API key (Authorization: Bearer pk_live_egt_...) reaches the payment and
  * transaction endpoints only, and can be regenerated from the dashboard if it leaks. The merchant
- * email + password (JWT obtained from /login) is still accepted for backward compatibility, but it
- * opens the whole account: prefer the key. Either way, keep the secret server-side and never log it.
+ * email + password (JWT obtained from /login) is deprecated: once two-step verification (MFA) is
+ * enabled on the account, /login answers 401 "mfa_required" instead of a token and this mode stops
+ * working. Use the API key. Keep it server-side and never log it.
  */
 final class Client
 {
@@ -58,7 +59,7 @@ final class Client
      *     environment?:string,
      *     token?:string,
      *     timeout?:int
-     * } $config Either "api_key", or "username" + "password" (legacy JWT login).
+     * } $config Either "api_key", or "username" + "password" (deprecated JWT login, fails once MFA is enabled).
      */
     public function __construct(array $config, ?HttpClientInterface $http = null)
     {
